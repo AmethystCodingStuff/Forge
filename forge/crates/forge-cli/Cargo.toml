@@ -1,0 +1,17 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-agent = { path = "../forge-agent" }
+forge-models = { path = "../forge-models" }
+forge-tools = { path = "../forge-tools" }
+
+[dev-dependencies]
+pretty_assertions = "1"
