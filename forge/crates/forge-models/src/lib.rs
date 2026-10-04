@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use thiserror::Error;
 
+pub mod mission;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelMessage {
     pub role: String,

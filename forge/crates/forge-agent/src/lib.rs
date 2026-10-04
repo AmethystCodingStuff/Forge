@@ -1,25 +1,50 @@
-//! Bounded, event-producing agent runtime for the Forge foundation.
+//! Hard-disabled public agent facade pending authorization and verification.
 
-use forge_models::{ModelError, ModelMessage, ModelProvider, ModelRequest};
+use forge_models::{ModelError, ModelProvider};
 use forge_tools::{ToolError, ToolExecutor};
-use serde_json::json;
+use serde_json::Value;
 use thiserror::Error;
 
 const MAX_TURNS: usize = 8;
+
+/// The only outcome currently available without a verifier-issued evidence pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStatus {
+    BlockedNotVerified,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
     MissionStarted { objective: String },
     ToolStarted { name: String },
     ToolCompleted { name: String, success: bool },
-    MissionCompleted { verified: bool },
+    MissionFinished { status: AgentStatus },
 }
 
+/// A blocked agent outcome paired with Forge-owned, non-success status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentResult {
-    pub summary: String,
-    pub verified: bool,
+    /// Empty while [`Agent::run`] is hard-disabled; no model prose is returned.
+    pub model_response: String,
+    /// The runtime cannot report a verified or completed outcome yet.
+    pub status: AgentStatus,
     pub events: Vec<AgentEvent>,
+}
+
+impl AgentResult {
+    /// Render Forge's authoritative status, including untrusted text only when present.
+    pub fn render(&self) -> String {
+        let (mission_status, verification_status) = match self.status {
+            AgentStatus::BlockedNotVerified => ("BLOCKED", "NOT_VERIFIED"),
+        };
+        let mut rendered =
+            format!("Forge status: {mission_status}\nForge verification: {verification_status}");
+        if !self.model_response.is_empty() {
+            rendered.push_str("\nGenerated model response (unverified; not Forge status):\n");
+            rendered.push_str(&self.model_response);
+        }
+        rendered
+    }
 }
 
 #[derive(Debug, Error)]
@@ -32,68 +57,46 @@ pub enum AgentError {
     TurnLimit,
 }
 
-/// Runs a bounded model/tool conversation and records observable execution events.
+/// Agent facade. Its run entry point remains disabled until authorization and
+/// evidence-backed verification are implemented.
 pub struct Agent<P> {
-    provider: P,
-    tools: ToolExecutor,
-    model: String,
+    _provider: P,
+    _tools: Box<dyn AgentToolExecutor>,
+    _model: String,
+}
+
+#[allow(dead_code)]
+trait AgentToolExecutor: Send + Sync {
+    fn execute(&self, name: &str, arguments: &Value) -> Result<Value, ToolError>;
+}
+
+impl AgentToolExecutor for ToolExecutor {
+    fn execute(&self, name: &str, arguments: &Value) -> Result<Value, ToolError> {
+        ToolExecutor::execute(self, name, arguments)
+    }
 }
 
 impl<P: ModelProvider> Agent<P> {
     pub fn new(provider: P, tools: ToolExecutor, model: String) -> Self {
+        Self::with_executor(provider, tools, model)
+    }
+
+    fn with_executor<E: AgentToolExecutor + 'static>(provider: P, tools: E, model: String) -> Self {
         Self {
-            provider,
-            tools,
-            model,
+            _provider: provider,
+            _tools: Box::new(tools),
+            _model: model,
         }
     }
 
     pub fn run(&self, objective: String) -> Result<AgentResult, AgentError> {
-        let mut events = vec![AgentEvent::MissionStarted {
-            objective: objective.clone(),
-        }];
-        let mut messages = vec![
-            ModelMessage { role: "system".to_owned(), content: "You are Forge, a careful software engineer. Inspect before editing, use tools only when needed, run relevant verification, and give a concise evidence-based final result. Never claim verification without tool output.".to_owned() },
-            ModelMessage { role: "user".to_owned(), content: objective },
-        ];
-        for _ in 0..MAX_TURNS {
-            let response = self.provider.complete(&ModelRequest {
-                model: self.model.clone(),
-                messages: messages.clone(),
-                tools: ToolExecutor::definitions(),
-            })?;
-            if response.tool_calls.is_empty() {
-                let summary = response
-                    .content
-                    .unwrap_or_else(|| "The provider returned no final result.".to_owned());
-                let verified = messages.iter().any(|message| {
-                    message.role == "tool" && message.content.contains("\"success\":true")
-                });
-                events.push(AgentEvent::MissionCompleted { verified });
-                return Ok(AgentResult {
-                    summary,
-                    verified,
-                    events,
-                });
-            }
-            for call in response.tool_calls {
-                events.push(AgentEvent::ToolStarted {
-                    name: call.name.clone(),
-                });
-                let output = self.tools.execute(&call.name, &call.arguments);
-                events.push(AgentEvent::ToolCompleted {
-                    name: call.name.clone(),
-                    success: output.is_ok(),
-                });
-                messages.push(ModelMessage {
-                    role: "assistant".to_owned(),
-                    content: format!("Tool call {}: {}", call.id, call.name),
-                });
-                messages.push(ModelMessage { role: "tool".to_owned(), content: json!({"tool_call_id": call.id, "result": output.as_ref().map_err(ToString::to_string)}).to_string() });
-                output?;
-            }
-        }
-        Err(AgentError::TurnLimit)
+        let _ = objective;
+        let status = AgentStatus::BlockedNotVerified;
+        Ok(AgentResult {
+            model_response: String::new(),
+            status,
+            events: Vec::new(),
+        })
     }
 }
 

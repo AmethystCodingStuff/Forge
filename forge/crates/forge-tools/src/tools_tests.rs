@@ -24,3 +24,26 @@ fn balanced_permission_allows_project_edits() {
         "Forge"
     );
 }
+
+#[test]
+fn subprocess_tools_fail_closed_without_launching_commands() {
+    let temp = tempfile::tempdir().unwrap();
+    let tools = ToolExecutor::new(temp.path().to_owned(), PermissionLevel::Balanced).unwrap();
+    let sentinel = temp.path().join("must-not-exist");
+    let command = format!("touch {}", sentinel.display());
+
+    assert!(matches!(
+        tools.execute("execute_command", &json!({"command":command})),
+        Err(ToolError::AuthorizationRequired)
+    ));
+    assert!(!sentinel.exists());
+    assert!(matches!(
+        tools.execute("git_status", &json!({})),
+        Err(ToolError::AuthorizationRequired)
+    ));
+    assert!(matches!(
+        tools.execute("git_diff", &json!({})),
+        Err(ToolError::AuthorizationRequired)
+    ));
+    assert!(!sentinel.exists());
+}

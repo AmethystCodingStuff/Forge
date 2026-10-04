@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/forge-models",
+  "crates/forge-core",
   "crates/forge-tools",
   "crates/forge-agent",
   "crates/forge-cli",

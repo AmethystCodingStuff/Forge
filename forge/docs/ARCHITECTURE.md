@@ -1,23 +1,19 @@
 # Forge architecture
 
-## Foundation
+## Current workspace
 
-Forge is a standalone Rust workspace with no dependency on another coding agent:
+The Rust workspace separates provider models, a hard-disabled agent facade, project tools, core mission-domain rules, and CLI parsing. The crate boundaries exist, but the CLI does not currently dispatch objectives to the agent runtime.
 
-```text
-forge-cli → forge-agent (bounded runtime + events)
-                ├─ forge-models (provider abstraction + OpenRouter)
-                └─ forge-tools (project-contained file, Git, and command tools)
-```
+`forge-models` defines provider-neutral requests and the OpenRouter adapter. `forge-agent` retains a public `Agent::run` facade, but that method is hard-disabled and returns before provider, tool, filesystem, or process use. `forge-tools` has basic relative-path file operations; its command and Git tools always return `E_COMMAND_AUTHORIZATION_REQUIRED` because there is no safe exact one-shot authorization flow. The CLI supports help/version, reports unfinished routes as unavailable, and refuses objective dispatch before provider setup or subprocess creation.
 
-A model response requests named tools with structured JSON or provides a final answer. The runtime stores system instruction, objective, and tool observations; it caps execution at eight turns. `MissionStarted`, `ToolStarted`, `ToolCompleted`, and `MissionCompleted` are presentation-independent events that future CLI, web, and mobile clients must consume from the same Forge process.
+## Agent result and status
 
-## Providers and safety
+`Agent::run` returns only the typed `BlockedNotVerified` outcome: Forge status is `BLOCKED` and verification status is `NOT_VERIFIED`. Its model response is empty, it emits no execution events, and it makes no provider request or tool call. There is no verifier-issued evidence pipeline, required-check runner, or review pipeline, so objective execution remains unavailable.
 
-`ModelProvider` accepts neutral requests so role-based routing and additional providers can follow without changing the runtime. `OpenRouterProvider` uses the OpenAI-compatible `/chat/completions` API. `OPENROUTER_API_KEY` stays outside model messages and events.
+The mission-domain completion gate also fails closed. Opaque evidence types and revision-binding interfaces exist, but there is no production workspace snapshotter, authorized check runner, evidence issuer, review-revision pipeline, or final resnapshot. Consequently, mission completion is unavailable; a caller-supplied `Verified` value or model-authored claim cannot complete a mission.
 
-Tools use `Safe`, `Balanced`, and `Autonomous` permissions. Paths must be relative to the project root; commands capture output, time out after 60 seconds, and block destructive/network-oriented prefixes unless autonomous permission is granted. This is defense in depth, not a complete sandbox.
+## Security boundaries and roadmap
 
-## Verification and roadmap
+Relative-path validation and permission levels are limited checks, not an OS sandbox or a race-safe filesystem capability. Subprocess execution and Git inspection are disabled; no command timeout, command-prefix execution policy, or child-process isolation is implemented. File operations do not confer confinement on a future child process.
 
-Forge labels a run `VERIFIED` only after an executed command returns success. File work alone results in `NOT VERIFIED`; unrecoverable errors result in `FAILED`. Durable `.forge` missions and checkpoints, review/security guardians, authenticated local APIs, browser QA, and remote daemon pairing are deliberately deferred until the foundational loop is stable.
+Durable `.forge` missions and checkpoints, real verification and review, authenticated local APIs, browser QA, remote daemon pairing, and a safe interactive subprocess-approval flow remain roadmap items. Documentation and output must continue to distinguish these from implemented behavior.

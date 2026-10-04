@@ -170,6 +170,14 @@ dependencies = [
  "forge-agent",
  "forge-models",
  "forge-tools",
+ "tempfile",
+]
+
+[[package]]
+name = "forge-core"
+version = "0.1.0"
+dependencies = [
+ "forge-models",
 ]
 
 [[package]]
