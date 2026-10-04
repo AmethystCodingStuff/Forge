@@ -1,92 +1,80 @@
-use forge_agent::{Agent, AgentEvent};
-use forge_models::OpenRouterProvider;
-use forge_tools::{PermissionLevel, ToolExecutor};
+use forge_cli::{CliError, Command, MissionAction, parse_args};
 use std::env;
 
 fn main() {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    if arguments.is_empty()
-        || arguments
-            .iter()
-            .any(|argument| argument == "--help" || argument == "-h")
-    {
-        print_help();
-        return;
-    }
-    let objective = arguments
-        .iter()
-        .filter(|argument| !argument.starts_with("--"))
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if objective.is_empty() {
-        eprintln!("forge: a mission objective is required");
-        std::process::exit(2);
-    }
-    let model =
-        value_after(&arguments, "--model").unwrap_or_else(|| "openai/gpt-4.1-mini".to_owned());
-    let provider = value_after(&arguments, "--provider").unwrap_or_else(|| "openrouter".to_owned());
-    if provider != "openrouter" {
-        eprintln!(
-            "forge: unsupported provider `{provider}`; this foundation currently implements OpenRouter"
-        );
-        std::process::exit(2);
-    }
-    let api_key = match env::var("OPENROUTER_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("forge: set OPENROUTER_API_KEY to use OpenRouter");
-            std::process::exit(2);
-        }
-    };
-    let root = env::current_dir().unwrap_or_else(|error| {
-        eprintln!("forge: cannot determine current directory: {error}");
-        std::process::exit(1);
-    });
-    let tools = ToolExecutor::new(root, PermissionLevel::Balanced).unwrap_or_else(|error| {
-        eprintln!("forge: cannot initialize tools: {error}");
-        std::process::exit(1);
-    });
-    println!("⚒ Forge\n\nMission:\n{objective}\n\n◉ Planning and execution");
-    match Agent::new(
-        OpenRouterProvider::new(api_key, value_after(&arguments, "--base-url")),
-        tools,
-        model,
-    )
-    .run(objective)
-    {
-        Ok(result) => {
-            for event in &result.events {
-                if let AgentEvent::ToolCompleted { name, success } = event {
-                    println!("{} {name}", if *success { "✓" } else { "✗" });
-                }
-            }
-            println!(
-                "\n{}\n\n{}",
-                if result.verified {
-                    "VERIFIED"
-                } else {
-                    "NOT VERIFIED"
-                },
-                result.summary
-            );
-        }
-        Err(error) => {
-            eprintln!("\nFAILED\n{error}");
-            std::process::exit(1);
-        }
+    let result = parse_args(&arguments).and_then(dispatch);
+    if let Err(error) = result {
+        std::process::exit(report_error(error));
     }
 }
 
-fn value_after(arguments: &[String], flag: &str) -> Option<String> {
-    arguments
-        .iter()
-        .position(|argument| argument == flag)
-        .and_then(|index| arguments.get(index + 1))
-        .cloned()
+fn dispatch(command: Command) -> Result<(), CliError> {
+    match command {
+        Command::Help => {
+            print!("{}", forge_cli::help_text());
+            Ok(())
+        }
+        Command::Version => {
+            println!("forge {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Command::Mission(None) => {
+            print!("{}", forge_cli::mission_help_text());
+            Ok(())
+        }
+        Command::Doctor => unavailable("doctor", "This command is not implemented yet."),
+        Command::Mission(Some(action)) => {
+            let label = match action {
+                MissionAction::List => "mission list",
+                MissionAction::Status => "mission status",
+                MissionAction::Resume => "mission resume",
+                MissionAction::Pause => "mission pause",
+            };
+            unavailable(label, "This command is not implemented yet.")
+        }
+        Command::Verify => unavailable("verify", "This command is not implemented yet."),
+        Command::Review => unavailable("review", "This command is not implemented yet."),
+        Command::Memory => unavailable("memory", "This command is not implemented yet."),
+        Command::Update => unavailable(
+            "update",
+            "Update source, verification, opt-in, and rollback rules are not defined.",
+        ),
+        Command::Objective { .. } => Err(CliError::CommandAuthorizationRequired {
+            operation: "objective",
+            reason: "This build has no safe interactive exact-invocation approval flow.",
+        }),
+    }
 }
-fn print_help() {
-    println!(
-        "⚒ Forge — The AI Software Engineer\n\nUsage:\n  forge <MISSION> [--provider openrouter] [--model MODEL] [--base-url URL]\n\nEnvironment:\n  OPENROUTER_API_KEY  API key for OpenRouter (never stored by Forge)\n\nForge runs a bounded, tool-mediated engineering loop in the current project."
-    );
+
+fn unavailable(command: &'static str, reason: &'static str) -> Result<(), CliError> {
+    Err(CliError::FeatureUnavailable { command, reason })
+}
+
+/// Render CLI errors consistently and map them to Forge-level exit codes.
+fn report_error(error: CliError) -> i32 {
+    match error {
+        CliError::InvalidUsage(message) => {
+            eprintln!("error[E_INVALID_USAGE]: {message}");
+            2
+        }
+        CliError::CommandAuthorizationRequired { operation, reason } => {
+            eprintln!(
+                "error[E_COMMAND_AUTHORIZATION_REQUIRED]: a fresh exact one-shot approval is required for {operation}."
+            );
+            eprintln!("{reason}");
+            eprintln!("No provider request, subprocess, or file modification was started.");
+            3
+        }
+        CliError::FeatureUnavailable { command, reason } => {
+            eprintln!("error[E_FEATURE_UNAVAILABLE]: `forge {command}` is unavailable.");
+            eprintln!("{reason}");
+            if command == "update" {
+                eprintln!("No network request was made; no files were changed.");
+            } else {
+                eprintln!("No files were changed.");
+            }
+            6
+        }
+    }
 }

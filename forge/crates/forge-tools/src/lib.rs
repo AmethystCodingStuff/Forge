@@ -1,11 +1,9 @@
-//! Sandboxed-to-project tool primitives with explicit risk classification.
+//! Project-scoped tool primitives. Subprocess tools remain unavailable until
+//! exact one-shot authorization can be safely reviewed and bound to each call.
 
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,14 +33,15 @@ pub enum ToolError {
     Input(String),
     #[error("tool failed: {0}")]
     Execution(String),
-    #[error("tool timed out after {0:?}")]
-    Timeout(Duration),
+    #[error(
+        "E_COMMAND_AUTHORIZATION_REQUIRED: no child process was started; exact one-shot authorization is unavailable"
+    )]
+    AuthorizationRequired,
 }
 
 pub struct ToolExecutor {
     root: PathBuf,
     permission: PermissionLevel,
-    command_timeout: Duration,
 }
 
 impl ToolExecutor {
@@ -52,7 +51,6 @@ impl ToolExecutor {
                 .canonicalize()
                 .map_err(|error| ToolError::Execution(error.to_string()))?,
             permission,
-            command_timeout: Duration::from_secs(60),
         })
     }
 
@@ -70,11 +68,19 @@ impl ToolExecutor {
             ),
             definition(
                 "execute_command",
-                "Run a project command and return its captured output.",
+                "Unavailable: subprocess execution requires a fresh exact one-shot approval.",
                 json!({"command":{"type":"string"}}),
             ),
-            definition("git_status", "Show the project's Git status.", json!({})),
-            definition("git_diff", "Show uncommitted Git changes.", json!({})),
+            definition(
+                "git_status",
+                "Unavailable: Git subprocesses require a fresh exact one-shot approval.",
+                json!({}),
+            ),
+            definition(
+                "git_diff",
+                "Unavailable: Git subprocesses require a fresh exact one-shot approval.",
+                json!({}),
+            ),
         ]
     }
 
@@ -125,52 +131,14 @@ impl ToolExecutor {
         Ok(json!({"path": input, "bytes_written": content.len()}))
     }
 
-    fn execute_command(&self, command: &str) -> Result<Value, ToolError> {
+    fn execute_command(&self, _command: &str) -> Result<Value, ToolError> {
         self.allow(Risk::Balanced, "execute_command")?;
-        if is_dangerous_command(command) {
-            return Err(ToolError::Permission {
-                operation: "dangerous command".to_owned(),
-                required: PermissionLevel::Autonomous,
-            });
-        }
-        let mut child = shell_command(command)
-            .current_dir(&self.root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| ToolError::Execution(error.to_string()))?;
-        let start = Instant::now();
-        while child
-            .try_wait()
-            .map_err(|error| ToolError::Execution(error.to_string()))?
-            .is_none()
-        {
-            if start.elapsed() >= self.command_timeout {
-                child
-                    .kill()
-                    .map_err(|error| ToolError::Execution(error.to_string()))?;
-                return Err(ToolError::Timeout(self.command_timeout));
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| ToolError::Execution(error.to_string()))?;
-        Ok(
-            json!({"success": output.status.success(), "exit_code": output.status.code(), "stdout": String::from_utf8_lossy(&output.stdout), "stderr": String::from_utf8_lossy(&output.stderr)}),
-        )
+        Err(ToolError::AuthorizationRequired)
     }
 
-    fn git(&self, args: &[&str]) -> Result<Value, ToolError> {
+    fn git(&self, _args: &[&str]) -> Result<Value, ToolError> {
         self.allow(Risk::Safe, "git")?;
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.root)
-            .output()
-            .map_err(|error| ToolError::Execution(error.to_string()))?;
-        Ok(
-            json!({"success": output.status.success(), "stdout": String::from_utf8_lossy(&output.stdout), "stderr": String::from_utf8_lossy(&output.stderr)}),
-        )
+        Err(ToolError::AuthorizationRequired)
     }
 
     fn allow(&self, risk: Risk, operation: &str) -> Result<(), ToolError> {
@@ -196,36 +164,11 @@ fn definition(name: &str, description: &str, properties: Value) -> forge_models:
         parameters: json!({"type":"object","properties":properties,"additionalProperties":false}),
     }
 }
+
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, ToolError> {
     value[key]
         .as_str()
         .ok_or_else(|| ToolError::Input(format!("{key} must be a string")))
-}
-fn is_dangerous_command(command: &str) -> bool {
-    [
-        "rm ",
-        "del ",
-        "git reset --hard",
-        "git clean",
-        "curl ",
-        "wget ",
-        "ssh ",
-        "sudo ",
-    ]
-    .iter()
-    .any(|prefix| command.trim_start().starts_with(prefix))
-}
-#[cfg(windows)]
-fn shell_command(command: &str) -> Command {
-    let mut shell = Command::new("cmd");
-    shell.args(["/C", command]);
-    shell
-}
-#[cfg(not(windows))]
-fn shell_command(command: &str) -> Command {
-    let mut shell = Command::new("sh");
-    shell.args(["-lc", command]);
-    shell
 }
 
 #[cfg(test)]

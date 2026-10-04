@@ -12,3 +12,6 @@ path = "src/main.rs"
 forge-agent = { path = "../forge-agent" }
 forge-models = { path = "../forge-models" }
 forge-tools = { path = "../forge-tools" }
+
+[dev-dependencies]
+tempfile = "3"
